@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "confirm": {
+        "description": "Do you want to add the Iceco Refrigerator at {address}?"
+      },
+      "user": {
+        "description": "Enter the Bluetooth address of your Iceco refrigerator, or it will be auto-discovered.",
+        "data": {
+          "address": "Bluetooth Address"
+        }
+      },
+      "select_device": {
+        "description": "Select your Iceco refrigerator from the discovered devices.",
+        "data": {
+          "address": "Device"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the refrigerator. Make sure it is powered on and within range."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Configure alarm and monitoring settings for your Iceco refrigerator.",
+        "data": {
+          "poll_interval": "Poll Interval (seconds)",
+          "power_loss_timeout": "Power Loss Timeout (minutes)",
+          "temp_deviation_threshold": "Temperature Deviation Threshold (°C)",
+          "temp_deviation_duration": "Temperature Deviation Duration (minutes)"
+        },
+        "data_description": {
+          "poll_interval": "How often to check connection health (30-300 seconds)",
+          "power_loss_timeout": "Time without updates before triggering power loss alarm (10-120 minutes)",
+          "temp_deviation_threshold": "Temperature difference from setpoint to trigger alarm (1-10°C)",
+          "temp_deviation_duration": "How long temperature must be off before alarming (5-60 minutes)"
+        }
+      }
+    }
+  }
+}
