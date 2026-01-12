@@ -303,10 +303,19 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
                 minutes=self._options.get(CONF_POWER_LOSS_TIMEOUT, DEFAULT_POWER_LOSS_TIMEOUT)
             )
 
+            prev_alarm_state = self.data.power_loss_alarm
             if time_since_update > power_loss_timeout:
                 self.data.power_loss_alarm = True
             else:
                 self.data.power_loss_alarm = False
+
+            # If alarm state changed, log it
+            if prev_alarm_state != self.data.power_loss_alarm:
+                _LOGGER.warning(
+                    "Power loss alarm %s (no update for %s)",
+                    "TRIGGERED" if self.data.power_loss_alarm else "cleared",
+                    time_since_update
+                )
 
             # Check connection health
             poll_interval = timedelta(seconds=self.update_interval.total_seconds())
