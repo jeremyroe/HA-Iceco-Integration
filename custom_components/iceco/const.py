@@ -13,9 +13,9 @@ CONF_TEMP_DEVIATION_DURATION = "temp_deviation_duration"
 
 # Default values
 DEFAULT_POLL_INTERVAL = 60  # seconds
-DEFAULT_POWER_LOSS_TIMEOUT = 30  # minutes
-DEFAULT_TEMP_DEVIATION_THRESHOLD = 5  # degrees Celsius
-DEFAULT_TEMP_DEVIATION_DURATION = 15  # minutes
+DEFAULT_POWER_LOSS_TIMEOUT = 15  # minutes (lowered from 30 for faster alerts)
+DEFAULT_TEMP_DEVIATION_THRESHOLD = 10  # degrees Fahrenheit
+DEFAULT_TEMP_DEVIATION_DURATION = 5  # minutes (lowered from 15 for faster alerts)
 
 # Validation ranges
 MIN_POLL_INTERVAL = 30
@@ -37,6 +37,7 @@ ENTITY_TEMP_ALARM_RIGHT = "temp_alarm_right"
 ENTITY_POWER_SWITCH = "power_switch"
 ENTITY_ECO_MODE = "eco_mode"
 ENTITY_LOCK = "lock"
+ENTITY_CONNECTION = "connection"
 
 # Attribute keys
 ATTR_BATTERY_PROTECTION_LEVEL = "battery_protection_level"
@@ -48,10 +49,11 @@ ATTR_DEVIATION = "deviation"
 ATTR_THRESHOLD = "threshold"
 ATTR_TIMEOUT_MINUTES = "timeout_minutes"
 
-# Temperature limits (Celsius)
-MIN_TEMP = -22
-MAX_TEMP = 10
+# Temperature limits (Fahrenheit)
+MIN_TEMP = -8  # -22°C = -7.6°F
+MAX_TEMP = 50  # +10°C = 50°F
 TEMP_STEP = 1
 
-# Hysteresis for alarm clearing (degrees Celsius)
-ALARM_HYSTERESIS = 2
+# Hysteresis for alarm clearing (degrees Fahrenheit)
+# Alarm clears when temp returns to within (threshold - hysteresis)
+ALARM_HYSTERESIS = 3  # 3°F hysteresis

@@ -147,16 +147,17 @@ class IcecoTempAlarm(CoordinatorEntity[IcecoDataUpdateCoordinator], BinarySensor
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
-        if not self.coordinator.data.status:
-            return {}
-
-        # Get current temp and setpoint
+        # Get current temp (from SECONDARY) and setpoint (from PRIMARY)
         if self._zone == "left":
-            actual = self.coordinator.data.status.left_temp
+            actual = self.coordinator.data.left_current_temp
             setpoint = self.coordinator.data.left_setpoint
         else:
-            actual = self.coordinator.data.status.right_temp
+            actual = self.coordinator.data.right_current_temp
             setpoint = self.coordinator.data.right_setpoint
+
+        # Return empty if no data available
+        if actual is None:
+            return {}
 
         attrs = {
             ATTR_CURRENT_TEMPERATURE: actual,

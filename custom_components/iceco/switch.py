@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     CONF_DEVICE_ADDRESS,
     DOMAIN,
+    ENTITY_CONNECTION,
     ENTITY_ECO_MODE,
     ENTITY_LOCK,
     ENTITY_POWER_SWITCH,
@@ -36,6 +37,7 @@ async def async_setup_entry(
             IcecoPowerSwitch(coordinator, entry),
             IcecoEcoModeSwitch(coordinator, entry),
             IcecoLockSwitch(coordinator, entry),
+            IcecoConnectionSwitch(coordinator, entry),
         ]
     )
 
@@ -204,3 +206,52 @@ class IcecoLockSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEntit
             self.coordinator.last_update_success
             and self.coordinator.data.connection_state == "connected"
         )
+
+
+class IcecoConnectionSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEntity):
+    """Switch entity for BLE connection control."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:bluetooth-connect"
+
+    def __init__(
+        self,
+        coordinator: IcecoDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+
+        self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{ENTITY_CONNECTION}"
+        self._attr_name = "BLE Connection"
+
+        # Device info
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
+            name="Iceco Refrigerator",
+            manufacturer="Iceco",
+            model="Dual Zone Refrigerator",
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if connected."""
+        return self.coordinator.data.connection_state == "connected"
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Connect to refrigerator."""
+        if self.coordinator.data.connection_state != "connected":
+            await self.coordinator.async_manual_reconnect()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disconnect from refrigerator (allows mobile app access)."""
+        if self.coordinator.data.connection_state == "connected":
+            await self.coordinator.async_manual_disconnect()
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # This switch should always be available to allow reconnection
+        return True

@@ -14,7 +14,7 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.data_entry_flow import FlowResult
 
-from iceco_protocol import IcecoClient
+from .iceco_protocol import IcecoClient
 
 from .const import (
     CONF_DEVICE_ADDRESS,
@@ -201,15 +201,11 @@ class IcecoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> IcecoOptionsFlow:
         """Get the options flow for this handler."""
-        return IcecoOptionsFlow(config_entry)
+        return IcecoOptionsFlow()
 
 
 class IcecoOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for Iceco integration."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
