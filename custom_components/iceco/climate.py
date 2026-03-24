@@ -51,7 +51,7 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
     """Climate entity for Iceco temperature zone."""
 
     _attr_has_entity_name = True
-    _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
     # Only one HVAC mode — fridge always cools. Power on/off via the Power switch.
     _attr_hvac_modes = [HVACMode.COOL]
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
@@ -126,18 +126,18 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
     def preset_mode(self) -> str | None:
         """Return preset label only when temperature matches a preset's canonical value."""
         temp = self.target_temperature
-        if temp == 0:
+        if temp == -18:
             return "Freezing"
-        if temp == 39:
+        if temp == 4:
             return "Refrigeration"
         return None
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set preset — jumps to the standard temp for that mode."""
         if preset_mode == "Freezing":
-            await self.async_set_temperature(temperature=0)
+            await self.async_set_temperature(temperature=-18)
         elif preset_mode == "Refrigeration":
-            await self.async_set_temperature(temperature=39)
+            await self.async_set_temperature(temperature=4)
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
@@ -146,8 +146,8 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
         if temperature is None:
             return
 
-        temp_int = int(temperature)
-        _LOGGER.info("Setting %s zone to %d°F", self._zone, temp_int)
+        temp_int = round(temperature)
+        _LOGGER.info("Setting %s zone to %d°C", self._zone, temp_int)
 
         try:
             if self._zone == "left":

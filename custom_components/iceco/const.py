@@ -14,7 +14,7 @@ CONF_TEMP_DEVIATION_DURATION = "temp_deviation_duration"
 # Default values
 DEFAULT_POLL_INTERVAL = 60  # seconds
 DEFAULT_POWER_LOSS_TIMEOUT = 15  # minutes (lowered from 30 for faster alerts)
-DEFAULT_TEMP_DEVIATION_THRESHOLD = 10  # degrees Fahrenheit
+DEFAULT_TEMP_DEVIATION_THRESHOLD = 5  # degrees Celsius
 DEFAULT_TEMP_DEVIATION_DURATION = 5  # minutes (lowered from 15 for faster alerts)
 
 # Validation ranges
@@ -49,11 +49,10 @@ ATTR_DEVIATION = "deviation"
 ATTR_THRESHOLD = "threshold"
 ATTR_TIMEOUT_MINUTES = "timeout_minutes"
 
-# Temperature limits (Fahrenheit)
-MIN_TEMP = -8  # -22°C = -7.6°F
-MAX_TEMP = 50  # +10°C = 50°F
+# Temperature limits (Celsius — HA auto-converts for display)
+MIN_TEMP = -22  # °C
+MAX_TEMP = 10   # °C
 TEMP_STEP = 1
 
-# Hysteresis for alarm clearing (degrees Fahrenheit)
-# Alarm clears when temp returns to within (threshold - hysteresis)
-ALARM_HYSTERESIS = 3  # 3°F hysteresis
+# Hysteresis for alarm clearing (degrees Celsius)
+ALARM_HYSTERESIS = 2

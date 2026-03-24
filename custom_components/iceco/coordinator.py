@@ -47,8 +47,7 @@ class IcecoData:
     left_current_temp: Optional[int] = None
     right_current_temp: Optional[int] = None
 
-    # User setpoints in Fahrenheit (read from PRIMARY notification)
-    # PRIMARY always reports in °C; we convert and store in °F.
+    # Setpoints in °C (read from PRIMARY notification — always °C)
     left_setpoint: Optional[int] = None
     right_setpoint: Optional[int] = None
 
@@ -179,13 +178,10 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
         status = IcecoProtocol.parse_notification(data)
 
         if status:
-            # PRIMARY always reports in °C — convert to °F for HA.
-            left_setpoint_f = round((status.left_temp * 9 / 5) + 32)
-            right_setpoint_f = round((status.right_temp * 9 / 5) + 32)
-
+            # PRIMARY always in °C — store directly.
             self.data.status = status
-            self.data.left_setpoint = left_setpoint_f
-            self.data.right_setpoint = right_setpoint_f
+            self.data.left_setpoint = status.left_temp
+            self.data.right_setpoint = status.right_temp
             self.data.locked = status.locked
             self.data.last_update = datetime.now()
             self.data.power_loss_alarm = False
@@ -200,10 +196,11 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
                 left_temp = secondary['left_setpoint']
                 right_temp = secondary['right_setpoint']
 
-                # Convert to °F if fridge is in Celsius display mode
-                if unit_mode == 1:
-                    left_temp = round((left_temp * 9 / 5) + 32)
-                    right_temp = round((right_temp * 9 / 5) + 32)
+                # SECONDARY reports in fridge's display unit — convert to °C for storage.
+                if unit_mode == 2:  # Fahrenheit
+                    left_temp = round((left_temp - 32) * 5 / 9)
+                    right_temp = round((right_temp - 32) * 5 / 9)
+                # unit_mode == 1 is already °C
 
                 self.data.left_current_temp = left_temp
                 self.data.right_current_temp = right_temp
@@ -361,18 +358,15 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
         return self.data
 
     async def async_set_left_temperature(self, temp: int) -> None:
-        """Set left zone temperature and store setpoint."""
+        """Set left zone temperature (°C) and store setpoint."""
         if not self._client or not self._client.is_connected:
             raise UpdateFailed("Not connected to refrigerator")
 
         try:
-            # Commands are always in °C regardless of the fridge's display unit.
-            temp_native = round((temp - 32) * 5 / 9)
-            command = IcecoProtocol.set_left_temperature(temp_native)
+            command = IcecoProtocol.set_left_temperature(temp)
             await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
-            # Store round-tripped value — matches what the fridge stores and what PRIMARY echoes
-            self.data.left_setpoint = round((temp_native * 9 / 5) + 32)
-            _LOGGER.info("Left zone setpoint → %d°F (%d°C → %d°F stored)", temp, temp_native, self.data.left_setpoint)
+            self.data.left_setpoint = temp
+            _LOGGER.info("Left zone setpoint → %d°C", temp)
             self.async_set_updated_data(self.data)
 
         except Exception as err:
@@ -380,18 +374,15 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
             raise UpdateFailed(f"Failed to set temperature: {err}")
 
     async def async_set_right_temperature(self, temp: int) -> None:
-        """Set right zone temperature and store setpoint."""
+        """Set right zone temperature (°C) and store setpoint."""
         if not self._client or not self._client.is_connected:
             raise UpdateFailed("Not connected to refrigerator")
 
         try:
-            # Commands are always in °C regardless of the fridge's display unit.
-            temp_native = round((temp - 32) * 5 / 9)
-            command = IcecoProtocol.set_right_temperature(temp_native)
+            command = IcecoProtocol.set_right_temperature(temp)
             await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
-            # Store round-tripped value — matches what the fridge stores and what PRIMARY echoes
-            self.data.right_setpoint = round((temp_native * 9 / 5) + 32)
-            _LOGGER.info("Right zone setpoint → %d°F (%d°C → %d°F stored)", temp, temp_native, self.data.right_setpoint)
+            self.data.right_setpoint = temp
+            _LOGGER.info("Right zone setpoint → %d°C", temp)
             self.async_set_updated_data(self.data)
 
         except Exception as err:
