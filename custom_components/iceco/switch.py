@@ -78,14 +78,23 @@ class IcecoPowerSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEnti
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the power on."""
         if not self.is_on:
-            await self.coordinator.async_toggle_power()
-            await self.coordinator.async_request_refresh()
+            # If disconnected (e.g. after a power-off), reconnect first.
+            # Note: on some firmware versions, reconnecting BLE itself powers the fridge on.
+            # Refresh state after reconnect before deciding whether to toggle.
+            if self.coordinator.data.connection_state != "connected":
+                await self.coordinator.async_manual_reconnect()
+                await self.coordinator.async_request_refresh()
+            if not self.is_on:
+                await self.coordinator.async_toggle_power()
+                await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the power off."""
         if self.is_on:
+            # Toggle first, then disconnect. The fridge firmware uses an active BLE
+            # connection as a keep-alive — without disconnecting, the fridge restarts.
             await self.coordinator.async_toggle_power()
-            await self.coordinator.async_request_refresh()
+            await self.coordinator.async_manual_disconnect()
 
     @property
     def available(self) -> bool:
@@ -113,7 +122,6 @@ class IcecoEcoModeSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEn
 
         self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{ENTITY_ECO_MODE}"
         self._attr_name = "ECO Mode"
-        self._state = False  # Optimistic state tracking
 
         # Device info
         self._attr_device_info = DeviceInfo(
@@ -124,24 +132,17 @@ class IcecoEcoModeSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEn
         )
 
     @property
-    def is_on(self) -> bool:
-        """Return True if ECO mode is on."""
-        # Protocol doesn't report ECO mode status, use optimistic state
-        return self._state
+    def is_on(self) -> bool | None:
+        """Return True if ECO mode is on, None if unknown."""
+        return self.coordinator.data.eco_mode
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn ECO mode on."""
-        if not self._state:
-            await self.coordinator.async_toggle_eco_mode()
-            self._state = True
-            self.async_write_ha_state()
+        await self.coordinator.async_set_eco_mode(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn ECO mode off (MAX mode)."""
-        if self._state:
-            await self.coordinator.async_toggle_eco_mode()
-            self._state = False
-            self.async_write_ha_state()
+        await self.coordinator.async_set_eco_mode(False)
 
     @property
     def available(self) -> bool:
@@ -169,7 +170,6 @@ class IcecoLockSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEntit
 
         self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{ENTITY_LOCK}"
         self._attr_name = "Control Panel Lock"
-        self._state = False  # Optimistic state tracking
 
         # Device info
         self._attr_device_info = DeviceInfo(
@@ -180,24 +180,17 @@ class IcecoLockSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEntit
         )
 
     @property
-    def is_on(self) -> bool:
-        """Return True if lock is on."""
-        # Protocol doesn't report lock status, use optimistic state
-        return self._state
+    def is_on(self) -> bool | None:
+        """Return True if control panel is locked."""
+        return self.coordinator.data.locked
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Lock the control panel."""
-        if not self._state:
-            await self.coordinator.async_toggle_lock()
-            self._state = True
-            self.async_write_ha_state()
+        await self.coordinator.async_set_lock(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Unlock the control panel."""
-        if self._state:
-            await self.coordinator.async_toggle_lock()
-            self._state = False
-            self.async_write_ha_state()
+        await self.coordinator.async_set_lock(False)
 
     @property
     def available(self) -> bool:

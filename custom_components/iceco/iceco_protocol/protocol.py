@@ -16,25 +16,25 @@ from typing import Optional
 
 @dataclass
 class IcecoStatus:
-    """Represents the current status from PRIMARY notification.
+    """Represents the status parsed from PRIMARY notification.
 
-    IMPORTANT: PRIMARY notification contains SETPOINTS, not current temps!
-    Current temps come from SECONDARY notification.
+    PRIMARY notification contains SETPOINTS (target temperatures) in the fridge's
+    native display unit, plus battery and power state. Updates immediately when a
+    setpoint command is accepted.
     """
 
-    # Temperature SETPOINTS (in Celsius, always)
-    # These are what the fridge is trying to reach, not current temps
-    left_temp: int  # Left zone setpoint in Celsius
-    right_temp: int  # Right zone setpoint in Celsius
+    # Setpoint temperatures in fridge's native display unit (°F when unit_mode=F, °C when unit_mode=C)
+    left_temp: int   # Left zone setpoint
+    right_temp: int  # Right zone setpoint
 
     # Battery information
     battery_protection_level: int  # 1, 2, or 3
     battery_voltage: float  # Volts (e.g., 12.6)
 
-    # Power state
-    power_on: bool  # True if on, False if off
+    # Power and lock state (from PRIMARY field 5: 0=off, 1=on+unlocked, 2=on+locked)
+    power_on: bool  # True if on (field 5 != 0)
+    locked: bool    # True if control panel is locked (field 5 == 2)
 
-    # Deprecated fields (kept for compatibility)
     left_set_temp: Optional[int] = None
     right_set_temp: Optional[int] = None
 
@@ -50,11 +50,14 @@ class IcecoProtocol:
     - S01: ECO/MAX mode toggle
     - S06: Lock/unlock toggle
 
-    PRIMARY notification: ,<L_Setpoint_C>,<R_Setpoint_C>,<BattProtect>,<Voltage>,<PowerStatus>\n
-    - Contains SETPOINTS in Celsius (updates immediately when setpoint changed)
+    PRIMARY notification: ,<L_Setpoint>,<R_Setpoint>,<BattProtect>,<Voltage>,<PowerStatus>\n
+    - Contains SETPOINTS in the fridge's native display unit (same unit as commands).
+    - Updates immediately when a setpoint command is accepted by the fridge.
 
-    SECONDARY notification: /S00/U/2,<power>,<unit_mode>,<L_Current>,<R_Current>\n
-    - Contains CURRENT temperatures in user's chosen unit (C or F)
+    SECONDARY notification: /S00/U/<zones>,<eco_max>,<unit_mode>,<L_Temp>,<R_Temp>\n
+    - Contains CURRENT PHYSICAL TEMPERATURES in the fridge's display unit.
+    - Also carries eco_max (0=ECO, 1=MAX) and unit_mode (1=°C, 2=°F).
+    - Always reflects actual sensor readings — confirmed via hardware testing.
     """
 
     # BLE characteristics
@@ -134,39 +137,46 @@ class IcecoProtocol:
         return IcecoProtocol.build_command(IcecoProtocol.CMD_POWER, "-01")
 
     @staticmethod
-    def toggle_eco_mode() -> bytes:
+    def set_eco_mode(eco_on: bool) -> bytes:
         """
-        Build command to toggle ECO/MAX mode.
+        Build command to set ECO or MAX mode.
+
+        Args:
+            eco_on: True to enable ECO mode, False for MAX mode
 
         Returns:
             Command bytes
         """
-        return IcecoProtocol.build_command(IcecoProtocol.CMD_ECO_MODE, "001")
+        # 001 = ECO on, 000 = MAX mode (confirmed from packet captures)
+        return IcecoProtocol.build_command(IcecoProtocol.CMD_ECO_MODE, "001" if eco_on else "000")
 
     @staticmethod
-    def toggle_lock() -> bytes:
+    def set_lock(locked: bool) -> bytes:
         """
-        Build command to toggle control panel lock.
+        Build command to lock or unlock the control panel.
+
+        Args:
+            locked: True to lock, False to unlock
 
         Returns:
             Command bytes
         """
-        # Note: Protocol shows both "001" and "002" for lock toggle
-        # Using "001" as default based on observations
-        return IcecoProtocol.build_command(IcecoProtocol.CMD_LOCK, "001")
+        # 002 = lock, 001 = unlock (confirmed from packet captures)
+        return IcecoProtocol.build_command(IcecoProtocol.CMD_LOCK, "002" if locked else "001")
 
     @staticmethod
     def parse_notification(data: bytes) -> Optional[IcecoStatus]:
         """
         Parse PRIMARY notification from the refrigerator.
 
-        PRIMARY contains SETPOINTS (in Celsius), not current temps!
+        PRIMARY contains SETPOINTS in the fridge's native display unit, plus
+        battery protection level, battery voltage, and power state.
 
         Args:
             data: Raw bytes from characteristic FFF4
 
         Returns:
-            IcecoStatus with setpoints if parsing succeeds, None otherwise
+            IcecoStatus with setpoints/battery/power if parsing succeeds, None otherwise
         """
         try:
             # Decode ASCII data
@@ -189,7 +199,9 @@ class IcecoProtocol:
                         right_temp=right_temp,
                         battery_protection_level=batt_protect,
                         battery_voltage=voltage,
-                        power_on=(power_status == 1)
+                        # power_status: 0=off, 1=on+unlocked, 2=on+locked
+                        power_on=(power_status != 0),
+                        locked=(power_status == 2)
                     )
 
             # Secondary status is parsed separately
@@ -203,15 +215,21 @@ class IcecoProtocol:
     @staticmethod
     def parse_secondary_status(data: bytes) -> Optional[dict]:
         """
-        Parse secondary status notification to extract current temps and unit mode.
+        Parse secondary status notification to extract current temperatures.
+
+        SECONDARY contains CURRENT PHYSICAL TEMPERATURES in the fridge's display unit,
+        plus eco mode and unit mode. Always reflects actual sensor readings — confirmed
+        via hardware testing. No echo behavior.
 
         Args:
             data: Raw bytes from characteristic FFF4
 
         Returns:
-            Dict with 'left_setpoint', 'right_setpoint', 'unit_mode', and 'zone_count' if parsing succeeds
-            unit_mode: 1 = Celsius, 2 = Fahrenheit (temps are in this unit)
-            zone_count: Number extracted from /S00/U/X (likely 1=single-zone, 2=dual-zone)
+            Dict with 'left_setpoint', 'right_setpoint', 'eco_max', 'unit_mode', 'zone_count'
+            (keys use 'setpoint' naming for legacy reasons — these are actual current temps)
+            unit_mode: 1 = Celsius, 2 = Fahrenheit
+            eco_max: 0 = ECO mode, 1 = MAX mode
+            zone_count: from /S00/U/X field (2 = dual-zone)
         """
         try:
             message = data.decode('ascii').strip()

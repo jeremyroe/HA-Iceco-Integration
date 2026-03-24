@@ -8,7 +8,6 @@ from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
     HVACMode,
-    PRESET_NONE,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
@@ -30,7 +29,6 @@ from .const import (
 from .coordinator import IcecoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-_LOGGER.warning("ICECO CLIMATE MODULE LOADED - THIS SHOULD APPEAR IN LOGS")
 
 
 async def async_setup_entry(
@@ -54,13 +52,14 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
 
     _attr_has_entity_name = True
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
-    _attr_hvac_modes = [HVACMode.COOL]  # Only cooling mode, power controlled by switch
+    # Only one HVAC mode — fridge always cools. Power on/off via the Power switch.
+    _attr_hvac_modes = [HVACMode.COOL]
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
     _attr_preset_modes = ["Refrigeration", "Freezing"]
     _attr_min_temp = MIN_TEMP
     _attr_max_temp = MAX_TEMP
     _attr_target_temperature_step = TEMP_STEP
-    _enable_turn_on_off_backwards_compatibility = False  # Disable HVAC mode control
+    _enable_turn_on_off_backwards_compatibility = False
 
     def __init__(
         self,
@@ -87,8 +86,7 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
 
     @property
     def current_temperature(self) -> float | None:
-        """Return the current temperature."""
-        # SECONDARY notification contains current temps
+        """Return the current temperature from SECONDARY notification."""
         if self._zone == "left":
             current = self.coordinator.data.left_current_temp
         else:
@@ -98,69 +96,58 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
 
     @property
     def target_temperature(self) -> float | None:
-        """Return the target temperature."""
-        # SECONDARY also contains setpoints - when at target, they match current
-        # We track user changes locally in the coordinator
-        if self._zone == "left":
-            # Use the value we set locally, falls back to reported value
-            return float(self.coordinator.data.left_setpoint) if self.coordinator.data.left_setpoint is not None else None
-        else:
-            return float(self.coordinator.data.right_setpoint) if self.coordinator.data.right_setpoint is not None else None
-
-    @property
-    def hvac_mode(self) -> HVACMode:
-        """Return current HVAC mode."""
-        # Zone is always in cooling mode (power controlled by main switch)
-        return HVACMode.COOL
-
-    @property
-    def hvac_action(self) -> str | None:
-        """Return current HVAC action - hide the mode indicator."""
-        # Don't show hvac action to keep UI clean
-        return None
-
-    @property
-    def preset_mode(self) -> str:
-        """Return current preset mode based on temperature."""
-        # Determine mode based on current or target temperature
-        temp = self.target_temperature or self.current_temperature
-
-        # Since we're using Fahrenheit, freezing is < 32°F
-        if temp is not None and temp < 32:
-            return "Freezing"
-        return "Refrigeration"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
-        attrs = {}
-
+        """Return the target (set) temperature from PRIMARY notification."""
         if self._zone == "left":
             setpoint = self.coordinator.data.left_setpoint
         else:
             setpoint = self.coordinator.data.right_setpoint
 
+        return float(setpoint) if setpoint is not None else None
+
+    @property
+    def hvac_mode(self) -> HVACMode:
+        """Always cooling — power on/off is the Power switch's job."""
+        return HVACMode.COOL
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        attrs = {}
+        setpoint = (
+            self.coordinator.data.left_setpoint
+            if self._zone == "left"
+            else self.coordinator.data.right_setpoint
+        )
         if setpoint is not None:
             attrs[ATTR_SET_TEMPERATURE] = setpoint
-
         return attrs
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return preset label only when temperature matches a preset's canonical value."""
+        temp = self.target_temperature
+        if temp == 0:
+            return "Freezing"
+        if temp == 39:
+            return "Refrigeration"
+        return None
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set preset — jumps to the standard temp for that mode."""
+        if preset_mode == "Freezing":
+            await self.async_set_temperature(temperature=0)
+        elif preset_mode == "Refrigeration":
+            await self.async_set_temperature(temperature=39)
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
-        _LOGGER.warning("ASYNC_SET_TEMPERATURE CALLED - kwargs=%s", kwargs)
         temperature = kwargs.get(ATTR_TEMPERATURE)
 
         if temperature is None:
-            _LOGGER.warning("async_set_temperature called with no temperature value")
             return
 
         temp_int = int(temperature)
-        _LOGGER.info(
-            "Setting %s zone temperature to %d°F (from %.1f°F input)",
-            self._zone,
-            temp_int,
-            temperature,
-        )
+        _LOGGER.info("Setting %s zone to %d°F", self._zone, temp_int)
 
         try:
             if self._zone == "left":
@@ -168,28 +155,14 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
             else:
                 await self.coordinator.async_set_right_temperature(temp_int)
 
-            # Request immediate update
             await self.coordinator.async_request_refresh()
-            _LOGGER.info("Temperature set command completed for %s zone", self._zone)
 
         except Exception as err:
-            _LOGGER.error("Failed to set temperature for %s zone: %s", self._zone, err)
+            _LOGGER.error("Failed to set %s zone temperature: %s", self._zone, err)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set HVAC mode - only COOL supported."""
-        # HVAC mode is always COOL, power controlled by main power switch
+        """No-op — only one HVAC mode supported."""
         pass
-
-    async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Set preset mode by adjusting temperature range."""
-        # Preset mode is informational based on temperature
-        # Users set temperature directly, mode follows automatically
-        if preset_mode == "Freezing":
-            # Suggest typical freezer temp if switching to freezing
-            await self.async_set_temperature(temperature=0)
-        elif preset_mode == "Refrigeration":
-            # Suggest typical refrigerator temp if switching to refrigeration
-            await self.async_set_temperature(temperature=38)
 
     @property
     def available(self) -> bool:

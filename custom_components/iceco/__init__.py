@@ -13,7 +13,6 @@ from .const import CONF_DEVICE_ADDRESS, DOMAIN
 from .coordinator import IcecoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-_LOGGER.warning("ICECO __INIT__ MODULE LOADED")
 
 PLATFORMS: list[Platform] = [
     Platform.CLIMATE,
@@ -25,7 +24,7 @@ PLATFORMS: list[Platform] = [
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Iceco from a config entry."""
-    _LOGGER.warning("ICECO ASYNC_SETUP_ENTRY CALLED - STARTING INTEGRATION SETUP")
+    _LOGGER.debug("Setting up Iceco integration")
 
     # Get device address from config
     address = entry.data[CONF_DEVICE_ADDRESS]
@@ -55,14 +54,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     # Forward entry setup to platforms
-    _LOGGER.warning("ICECO FORWARDING TO PLATFORMS: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    _LOGGER.warning("ICECO PLATFORM SETUP COMPLETE")
 
     # Register update listener for options changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
-    _LOGGER.warning("ICECO INTEGRATION SETUP COMPLETE")
+    _LOGGER.info("Iceco integration setup complete")
     return True
 
 

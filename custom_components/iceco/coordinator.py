@@ -48,17 +48,24 @@ class IcecoData:
     right_current_temp: Optional[int] = None
 
     # User setpoints in Fahrenheit (read from PRIMARY notification)
-    # PRIMARY reports setpoints in Celsius, we convert and store in F
+    # PRIMARY always reports in °C; we convert and store in °F.
     left_setpoint: Optional[int] = None
     right_setpoint: Optional[int] = None
 
-    # Fridge unit mode: "F" or "C" (detected from secondary status)
-    unit_mode: str = "F"  # Default to Fahrenheit
+    # Fridge display unit: "F" or "C" (detected from SECONDARY unit_mode field).
+    # Used only to interpret SECONDARY current temperatures — not for commands or PRIMARY.
+    unit_mode: str = "F"  # Default; overwritten on first SECONDARY received
 
     # Alarm states
     left_temp_alarm: bool = False
     right_temp_alarm: bool = False
     power_loss_alarm: bool = False
+
+    # ECO mode state (from SECONDARY eco_max field: 1=ECO, 0=MAX)
+    eco_mode: Optional[bool] = None  # True=ECO, False=MAX, None=unknown
+
+    # Lock state (from PRIMARY field 5: 2=locked, 1=unlocked)
+    locked: Optional[bool] = None  # True=locked, False=unlocked, None=unknown
 
     # Alarm timing tracking
     _left_alarm_start: Optional[datetime] = field(default=None, repr=False)
@@ -92,6 +99,10 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
         self._reconnect_count = 0
         self._manual_disconnect = False  # Flag to prevent auto-reconnect
 
+
+        # Event set on first received notification - used to verify data is flowing after connect
+        self._first_notification_event = asyncio.Event()
+
         # Initialize data
         self.data = IcecoData()
 
@@ -111,22 +122,43 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
             _LOGGER.debug("Attempting to connect to %s", self._ble_device.address)
             self.data.connection_state = "connecting"
 
-            # Use bleak-retry-connector for reliable connection
+            # Reset notification event before connecting so we can verify data flows after
+            self._first_notification_event.clear()
+
+            # Use bleak-retry-connector for reliable connection.
+            # Service cache is disabled: a stale cache causes "Characteristic not found"
+            # errors after HA restarts or device power cycles, requiring multiple retries
+            # or a power cycle to recover. Fresh GATT service discovery on every connection
+            # is slightly slower but eliminates this failure mode.
             self._client = await establish_connection(
                 BleakClientWithServiceCache,
                 self._ble_device,
                 self._ble_device.address,
                 disconnected_callback=self._handle_disconnect,
-                use_services_cache=True,
+                use_services_cache=False,
                 ble_device_callback=lambda: bluetooth.async_ble_device_from_address(
                     self.hass, self._ble_device.address, connectable=True
                 ),
             )
 
-            # Start receiving notifications
+            # Subscribe to status notifications from characteristic FFF4
             await self._client.start_notify(
                 IcecoProtocol.NOTIFY_UUID, self._notification_callback
             )
+
+            # Wait for first notification to confirm data is actually flowing.
+            # A successful BLE connection does not guarantee the fridge is sending data —
+            # the notification subscription can silently fail if the fridge BLE stack is
+            # in a bad state (e.g. after rapid reconnects during an HA restart/update).
+            try:
+                await asyncio.wait_for(self._first_notification_event.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                _LOGGER.error(
+                    "No notifications received within 10s of connecting to %s — "
+                    "fridge BLE stack may be in a bad state",
+                    self._ble_device.address,
+                )
+                raise UpdateFailed("Connected but no data received — fridge not sending notifications")
 
             self.data.connection_state = "connected"
             self._reconnect_count = 0
@@ -140,69 +172,49 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
     def _notification_callback(self, sender: int, data: bytes) -> None:
         """Handle incoming BLE notifications."""
-        _LOGGER.debug("Received notification: %s", data)
-        _LOGGER.warning("RAW NOTIFICATION DATA: %s", data)
+        # Signal that notifications are flowing (verifies connection quality on startup)
+        self._first_notification_event.set()
 
-        # Try parsing as PRIMARY notification (contains SETPOINTS in Celsius)
+        # Try parsing as PRIMARY notification (setpoints + battery/power status)
         status = IcecoProtocol.parse_notification(data)
 
         if status:
-            # PRIMARY notification contains SETPOINTS in Celsius, NOT current temps!
-            # Convert setpoints from Celsius to Fahrenheit for HA
+            # PRIMARY always reports in °C — convert to °F for HA.
             left_setpoint_f = round((status.left_temp * 9 / 5) + 32)
             right_setpoint_f = round((status.right_temp * 9 / 5) + 32)
 
-            _LOGGER.warning("PARSED PRIMARY (SETPOINTS) - left=%d°C (%d°F), right=%d°C (%d°F), battery=%.1fV, power=%s",
-                          status.left_temp, left_setpoint_f, status.right_temp, right_setpoint_f,
-                          status.battery_voltage, status.power_on)
-
-            # Update data with new status and setpoints
             self.data.status = status
             self.data.left_setpoint = left_setpoint_f
             self.data.right_setpoint = right_setpoint_f
+            self.data.locked = status.locked
             self.data.last_update = datetime.now()
-            self.data.power_loss_alarm = False  # Clear power loss alarm on successful update
+            self.data.power_loss_alarm = False
 
-            # Check temperature alarms
             self._check_temperature_alarms()
-
-            # Notify entities of update
             self.async_set_updated_data(self.data)
         else:
-            # Try parsing as SECONDARY notification (contains CURRENT temps in user's unit)
+            # Try parsing as SECONDARY notification (current temperatures in fridge's display unit)
             secondary = IcecoProtocol.parse_secondary_status(data)
             if secondary:
-                # SECONDARY contains actual CURRENT temperatures in fridge's current unit mode
-                # (These are NOT setpoints - setpoints come from PRIMARY!)
-                unit_mode = secondary['unit_mode']  # 1=C, 2=F
-                zone_count = secondary.get('zone_count', 0)  # Number from /S00/U/X
-                eco_max = secondary.get('eco_max', 1)  # 0=ECO, 1=MAX
-                left_temp = secondary['left_setpoint']  # Misnamed field - actually current temp
-                right_temp = secondary['right_setpoint']  # Misnamed field - actually current temp
+                unit_mode = secondary['unit_mode']
+                left_temp = secondary['left_setpoint']
+                right_temp = secondary['right_setpoint']
 
-                # HA uses Fahrenheit, so convert if fridge is in Celsius mode
-                if unit_mode == 1:  # Celsius mode
-                    left_temp_f = round((left_temp * 9 / 5) + 32)
-                    right_temp_f = round((right_temp * 9 / 5) + 32)
-                    _LOGGER.warning("PARSED SECONDARY (CURRENT TEMPS) - zones=%d, eco_max=%d, unit=C, left=%d°C (%d°F), right=%d°C (%d°F)",
-                                  zone_count, eco_max, left_temp, left_temp_f, right_temp, right_temp_f)
-                    left_temp = left_temp_f
-                    right_temp = right_temp_f
-                else:  # Fahrenheit mode
-                    _LOGGER.warning("PARSED SECONDARY (CURRENT TEMPS) - zones=%d, eco_max=%d, unit=F, left=%d°F, right=%d°F",
-                                  zone_count, eco_max, left_temp, right_temp)
+                # Convert to °F if fridge is in Celsius display mode
+                if unit_mode == 1:
+                    left_temp = round((left_temp * 9 / 5) + 32)
+                    right_temp = round((right_temp * 9 / 5) + 32)
 
-                # Update current temperatures (NOT setpoints!)
                 self.data.left_current_temp = left_temp
                 self.data.right_current_temp = right_temp
+                self.data.unit_mode = "C" if unit_mode == 1 else "F"
 
-                # NOTE: Setpoints are read from PRIMARY notification, not SECONDARY!
-                # Do not initialize or update setpoints from current temps
+                new_eco_mode = (secondary['eco_max'] == 1)  # 1=ECO, 0=MAX
+                if new_eco_mode != self.data.eco_mode:
+                    _LOGGER.info("ECO mode changed: raw eco_max=%d → eco_mode=%s", secondary['eco_max'], new_eco_mode)
+                self.data.eco_mode = new_eco_mode
 
-                # Notify entities of update
                 self.async_set_updated_data(self.data)
-            else:
-                _LOGGER.debug("Could not parse notification")
 
     def _check_temperature_alarms(self) -> None:
         """Check for temperature deviation alarms."""
@@ -324,38 +336,44 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
                     "No status update in %s, checking connection health",
                     time_since_update,
                 )
-                # If no recent update and not already reconnecting, trigger reconnect
                 if self.data.connection_state == "connected":
-                    _LOGGER.warning("Connection appears stale, reconnecting")
+                    # BLE layer says connected but fridge has gone silent. Must disconnect
+                    # cleanly before reconnecting — calling _async_connect() on an active
+                    # client causes start_notify() to fail, which flips state to
+                    # "disconnected" and then the next health check skips reconnect entirely.
+                    _LOGGER.warning("Connection appears stale, disconnecting and reconnecting")
+                    self._manual_disconnect = True  # prevent _handle_disconnect from scheduling another reconnect
+                    try:
+                        if self._client and self._client.is_connected:
+                            await self._client.disconnect()
+                    except Exception as disc_err:
+                        _LOGGER.debug("Error disconnecting stale client: %s", disc_err)
+                    self._manual_disconnect = False
+                    self.data.connection_state = "disconnected"
                     await self._async_connect()
+                elif self.data.connection_state == "disconnected":
+                    # Disconnected with no active reconnect task — scheduled reconnect
+                    # either never started or failed without rescheduling itself.
+                    if not self._reconnect_task or self._reconnect_task.done():
+                        _LOGGER.warning("Disconnected with no active reconnect task, triggering reconnect")
+                        await self._async_connect()
 
         return self.data
 
     async def async_set_left_temperature(self, temp: int) -> None:
         """Set left zone temperature and store setpoint."""
-        _LOGGER.info(
-            "async_set_left_temperature called: temp=%d, connected=%s",
-            temp,
-            self._client.is_connected if self._client else False,
-        )
-
         if not self._client or not self._client.is_connected:
-            _LOGGER.error("Cannot set left temperature: not connected to refrigerator")
             raise UpdateFailed("Not connected to refrigerator")
 
         try:
-            # Fridge ALWAYS interprets commands in Celsius, regardless of display unit mode
-            temp_celsius = round((temp - 32) * 5 / 9)
-            command = IcecoProtocol.set_left_temperature(temp_celsius)
-            _LOGGER.info("Sending left temperature command: %d°F → %d°C → %s", temp, temp_celsius, command)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command)
-
-            # Store the celsius value converted back to F (like mobile app does)
-            # This shows the actual setpoint the fridge accepted, accounting for rounding
-            temp_stored_f = round((temp_celsius * 9 / 5) + 32)
-            self.data.left_setpoint = temp_stored_f
+            # Commands are always in °C regardless of the fridge's display unit.
+            temp_native = round((temp - 32) * 5 / 9)
+            command = IcecoProtocol.set_left_temperature(temp_native)
+            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            # Store round-tripped value — matches what the fridge stores and what PRIMARY echoes
+            self.data.left_setpoint = round((temp_native * 9 / 5) + 32)
+            _LOGGER.info("Left zone setpoint → %d°F (%d°C → %d°F stored)", temp, temp_native, self.data.left_setpoint)
             self.async_set_updated_data(self.data)
-            _LOGGER.info("Successfully set left zone setpoint to %d°F (stored as %d°C → %d°F)", temp, temp_celsius, temp_stored_f)
 
         except Exception as err:
             _LOGGER.error("Failed to set left temperature: %s", err)
@@ -363,29 +381,18 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
     async def async_set_right_temperature(self, temp: int) -> None:
         """Set right zone temperature and store setpoint."""
-        _LOGGER.info(
-            "async_set_right_temperature called: temp=%d, connected=%s",
-            temp,
-            self._client.is_connected if self._client else False,
-        )
-
         if not self._client or not self._client.is_connected:
-            _LOGGER.error("Cannot set right temperature: not connected to refrigerator")
             raise UpdateFailed("Not connected to refrigerator")
 
         try:
-            # Fridge ALWAYS interprets commands in Celsius, regardless of display unit mode
-            temp_celsius = round((temp - 32) * 5 / 9)
-            command = IcecoProtocol.set_right_temperature(temp_celsius)
-            _LOGGER.info("Sending right temperature command: %d°F → %d°C → %s", temp, temp_celsius, command)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command)
-
-            # Store the celsius value converted back to F (like mobile app does)
-            # This shows the actual setpoint the fridge accepted, accounting for rounding
-            temp_stored_f = round((temp_celsius * 9 / 5) + 32)
-            self.data.right_setpoint = temp_stored_f
+            # Commands are always in °C regardless of the fridge's display unit.
+            temp_native = round((temp - 32) * 5 / 9)
+            command = IcecoProtocol.set_right_temperature(temp_native)
+            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            # Store round-tripped value — matches what the fridge stores and what PRIMARY echoes
+            self.data.right_setpoint = round((temp_native * 9 / 5) + 32)
+            _LOGGER.info("Right zone setpoint → %d°F (%d°C → %d°F stored)", temp, temp_native, self.data.right_setpoint)
             self.async_set_updated_data(self.data)
-            _LOGGER.info("Successfully set right zone setpoint to %d°F (stored as %d°C → %d°F)", temp, temp_celsius, temp_stored_f)
 
         except Exception as err:
             _LOGGER.error("Failed to set right temperature: %s", err)
@@ -398,40 +405,40 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.toggle_power()
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command)
+            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             _LOGGER.info("Toggled power state")
 
         except Exception as err:
             _LOGGER.error("Failed to toggle power: %s", err)
             raise UpdateFailed(f"Failed to toggle power: {err}")
 
-    async def async_toggle_eco_mode(self) -> None:
-        """Toggle ECO mode."""
+    async def async_set_eco_mode(self, eco_on: bool) -> None:
+        """Set ECO mode on or off."""
         if not self._client or not self._client.is_connected:
             raise UpdateFailed("Not connected to refrigerator")
 
         try:
-            command = IcecoProtocol.toggle_eco_mode()
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command)
-            _LOGGER.info("Toggled ECO mode")
+            command = IcecoProtocol.set_eco_mode(eco_on)
+            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            _LOGGER.info("ECO mode → %s", "ECO" if eco_on else "MAX")
 
         except Exception as err:
-            _LOGGER.error("Failed to toggle ECO mode: %s", err)
-            raise UpdateFailed(f"Failed to toggle ECO mode: {err}")
+            _LOGGER.error("Failed to set ECO mode: %s", err)
+            raise UpdateFailed(f"Failed to set ECO mode: {err}")
 
-    async def async_toggle_lock(self) -> None:
-        """Toggle control panel lock."""
+    async def async_set_lock(self, locked: bool) -> None:
+        """Lock or unlock the control panel."""
         if not self._client or not self._client.is_connected:
             raise UpdateFailed("Not connected to refrigerator")
 
         try:
-            command = IcecoProtocol.toggle_lock()
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command)
-            _LOGGER.info("Toggled lock")
+            command = IcecoProtocol.set_lock(locked)
+            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            _LOGGER.info("Lock → %s", "locked" if locked else "unlocked")
 
         except Exception as err:
-            _LOGGER.error("Failed to toggle lock: %s", err)
-            raise UpdateFailed(f"Failed to toggle lock: {err}")
+            _LOGGER.error("Failed to set lock: %s", err)
+            raise UpdateFailed(f"Failed to set lock: {err}")
 
     async def async_manual_disconnect(self) -> None:
         """Manually disconnect from refrigerator (for mobile app access)."""
