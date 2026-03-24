@@ -134,6 +134,6 @@ Contains **current physical temperatures** (actual sensor readings) and operatio
 ## Confirmed Behaviors
 
 - **Connection keep-alive:** The fridge firmware treats an active BLE connection as a keep-alive. If the connection drops while the fridge is running, the fridge continues operating normally.
-- **Power-off behavior:** When powered off via command, the BLE stack remains active and the fridge continues advertising. Reconnection does not automatically power the fridge back on.
+- **Power-off behavior:** When powered off via command, the BLE stack remains active and the fridge continues advertising. Reconnecting BLE while the fridge is off will power it back on — the firmware treats an incoming BLE connection as a wake signal.
 - **Command acceptance:** The fridge beeps and the LCD updates when a command is accepted. No beep indicates rejection (e.g. wrong format or write-with-response).
 - **Exclusive connection:** Only one BLE central can connect at a time. The Iceco mobile app and HA cannot be connected simultaneously.
