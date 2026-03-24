@@ -18,7 +18,6 @@ Home Assistant integration for Iceco dual-zone Bluetooth refrigerators. Control 
 - **Temperature deviation alarms** — triggers when a zone drifts too far from setpoint for too long
 - **Auto-discovery** — finds the fridge automatically via Bluetooth service UUID
 - **Unit preference** — displays in °F or °C based on your HA settings
-- **Multi-adapter support** — works with built-in Bluetooth, USB dongles, and ESP32 proxies
 
 ---
 
