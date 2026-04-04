@@ -98,6 +98,7 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
         self._reconnect_task: Optional[asyncio.Task] = None
         self._reconnect_count = 0
         self._manual_disconnect = False  # Flag to prevent auto-reconnect
+        self._write_lock = asyncio.Lock()  # Serialise BLE writes to prevent concurrent GATT ops
 
 
         # Event set on first received notification - used to verify data is flowing after connect
@@ -340,21 +341,30 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
                     # client causes start_notify() to fail, which flips state to
                     # "disconnected" and then the next health check skips reconnect entirely.
                     _LOGGER.warning("Connection appears stale, disconnecting and reconnecting")
-                    self._manual_disconnect = True  # prevent _handle_disconnect from scheduling another reconnect
                     try:
-                        if self._client and self._client.is_connected:
-                            await self._client.disconnect()
-                    except Exception as disc_err:
-                        _LOGGER.debug("Error disconnecting stale client: %s", disc_err)
-                    self._manual_disconnect = False
-                    self.data.connection_state = "disconnected"
-                    await self._async_connect()
+                        async with asyncio.timeout(60):
+                            self._manual_disconnect = True  # prevent _handle_disconnect from scheduling another reconnect
+                            try:
+                                if self._client and self._client.is_connected:
+                                    await self._client.disconnect()
+                            except Exception as disc_err:
+                                _LOGGER.debug("Error disconnecting stale client: %s", disc_err)
+                            self._manual_disconnect = False
+                            self.data.connection_state = "disconnected"
+                            await self._async_connect()
+                    except TimeoutError:
+                        _LOGGER.error("Timed out during stale connection recovery")
+                        self._manual_disconnect = False
                 elif self.data.connection_state == "disconnected":
                     # Disconnected with no active reconnect task — scheduled reconnect
                     # either never started or failed without rescheduling itself.
                     if not self._reconnect_task or self._reconnect_task.done():
                         _LOGGER.warning("Disconnected with no active reconnect task, triggering reconnect")
-                        await self._async_connect()
+                        try:
+                            async with asyncio.timeout(60):
+                                await self._async_connect()
+                        except TimeoutError:
+                            _LOGGER.error("Timed out during health-check reconnect")
 
         return self.data
 
@@ -365,7 +375,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.set_left_temperature(temp)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             self.data.left_setpoint = temp
             _LOGGER.info("Left zone setpoint → %d°C", temp)
             self.async_set_updated_data(self.data)
@@ -381,7 +392,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.set_right_temperature(temp)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             self.data.right_setpoint = temp
             _LOGGER.info("Right zone setpoint → %d°C", temp)
             self.async_set_updated_data(self.data)
@@ -397,7 +409,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.toggle_power()
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             _LOGGER.info("Toggled power state")
 
         except Exception as err:
@@ -411,7 +424,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.set_eco_mode(eco_on)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             _LOGGER.info("ECO mode → %s", "ECO" if eco_on else "MAX")
 
         except Exception as err:
@@ -425,7 +439,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.set_lock(locked)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             _LOGGER.info("Lock → %s", "locked" if locked else "unlocked")
 
         except Exception as err:
