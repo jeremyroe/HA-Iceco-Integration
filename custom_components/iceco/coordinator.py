@@ -17,7 +17,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .iceco_protocol import IcecoClient, IcecoProtocol, IcecoStatus
+from .iceco_protocol import IcecoProtocol, IcecoStatus
 
 from .const import (
     ALARM_HYSTERESIS,
@@ -63,8 +63,9 @@ class IcecoData:
     # ECO mode state (from SECONDARY eco_max field: 1=ECO, 0=MAX)
     eco_mode: Optional[bool] = None  # True=ECO, False=MAX, None=unknown
 
-    # Lock state (from PRIMARY field 5: 2=locked, 1=unlocked)
-    locked: Optional[bool] = None  # True=locked, False=unlocked, None=unknown
+    # Power and lock state (promoted from IcecoStatus for entity access)
+    power_on: Optional[bool] = None  # True=on, False=off, None=unknown
+    locked: Optional[bool] = None    # True=locked, False=unlocked, None=unknown
 
     # Alarm timing tracking
     _left_alarm_start: Optional[datetime] = field(default=None, repr=False)
@@ -182,6 +183,7 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
             self.data.status = status
             self.data.left_setpoint = status.left_temp
             self.data.right_setpoint = status.right_temp
+            self.data.power_on = status.power_on
             self.data.locked = status.locked
             self.data.last_update = datetime.now()
             self.data.power_loss_alarm = False

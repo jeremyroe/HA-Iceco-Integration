@@ -66,3 +66,4 @@ htmlcov/
 home-assistant.log
 home-assistant_v2.db
 OZW_Log.txt
+.venv-test/
