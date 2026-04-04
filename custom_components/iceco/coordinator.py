@@ -14,6 +14,7 @@ from bleak_retry_connector import (
 )
 
 from homeassistant.components import bluetooth
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -79,7 +80,7 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
         self,
         hass: HomeAssistant,
         ble_device: BLEDevice,
-        entry_id: str,
+        entry: ConfigEntry,
     ) -> None:
         """Initialize coordinator."""
         super().__init__(
@@ -87,13 +88,12 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
             _LOGGER,
             name=DOMAIN,
             update_interval=timedelta(
-                seconds=hass.config_entries.async_get_entry(entry_id)
-                .options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+                seconds=entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
             ),
         )
 
         self._ble_device = ble_device
-        self._entry_id = entry_id
+        self._entry = entry
         self._client: Optional[BleakClientWithServiceCache] = None
         self._reconnect_task: Optional[asyncio.Task] = None
         self._reconnect_count = 0
@@ -109,8 +109,7 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
     @property
     def _options(self) -> dict:
         """Get current options from config entry."""
-        entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        return entry.options if entry else {}
+        return self._entry.options
 
     async def _async_setup(self) -> None:
         """Set up the coordinator - called once on entry setup."""

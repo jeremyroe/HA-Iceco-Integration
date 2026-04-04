@@ -9,7 +9,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import CONF_DEVICE_ADDRESS, DOMAIN
+from .const import CONF_DEVICE_ADDRESS
 from .coordinator import IcecoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,18 +40,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     # Create coordinator
-    coordinator = IcecoDataUpdateCoordinator(hass, ble_device, entry.entry_id)
+    coordinator = IcecoDataUpdateCoordinator(hass, ble_device, entry)
 
-    # Perform initial connection and data fetch
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        _LOGGER.error("Failed to setup Iceco integration: %s", err)
-        raise ConfigEntryNotReady(f"Failed to connect to refrigerator: {err}")
+    # Register cleanup before first refresh so it always runs on unload
+    entry.async_on_unload(coordinator.async_shutdown)
 
-    # Store coordinator
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    # Perform initial connection and data fetch; raises ConfigEntryNotReady on failure
+    await coordinator.async_config_entry_first_refresh()
+
+    # Store coordinator on the entry (modern pattern — avoids hass.data globals)
+    entry.runtime_data = coordinator
 
     # Forward entry setup to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -66,16 +64,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.debug("Unloading Iceco integration")
-
-    # Unload platforms
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-    if unload_ok:
-        # Cleanup coordinator
-        coordinator: IcecoDataUpdateCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        await coordinator.async_shutdown()
-
-    return unload_ok
+    # Coordinator shutdown is handled by the async_on_unload callback registered at setup
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
