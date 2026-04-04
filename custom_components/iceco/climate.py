@@ -52,8 +52,7 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
 
     _attr_has_entity_name = True
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    # Only one HVAC mode — fridge always cools. Power on/off via the Power switch.
-    _attr_hvac_modes = [HVACMode.COOL]
+    _attr_hvac_modes = [HVACMode.COOL, HVACMode.OFF]
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
     _attr_preset_modes = ["Refrigeration", "Freezing"]
     _attr_min_temp = MIN_TEMP
@@ -106,7 +105,9 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
 
     @property
     def hvac_mode(self) -> HVACMode:
-        """Always cooling — power on/off is the Power switch's job."""
+        """Return COOL when powered on, OFF when powered off."""
+        if not self.coordinator.data.power_on:
+            return HVACMode.OFF
         return HVACMode.COOL
 
     @property
@@ -161,8 +162,11 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
             _LOGGER.error("Failed to set %s zone temperature: %s", self._zone, err)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """No-op — only one HVAC mode supported."""
-        pass
+        """Toggle power to match requested HVAC mode."""
+        if hvac_mode == HVACMode.OFF and self.coordinator.data.power_on:
+            await self.coordinator.async_toggle_power()
+        elif hvac_mode == HVACMode.COOL and not self.coordinator.data.power_on:
+            await self.coordinator.async_toggle_power()
 
     @property
     def available(self) -> bool:
