@@ -33,7 +33,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Iceco sensor entities from a config entry."""
-    coordinator: IcecoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: IcecoDataUpdateCoordinator = entry.runtime_data
 
     async_add_entities([IcecoBatterySensor(coordinator, entry)])
 
