@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -20,6 +20,7 @@ from .const import (
     ENTITY_POWER_SWITCH,
 )
 from .coordinator import IcecoDataUpdateCoordinator
+from .helpers import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,13 +60,7 @@ class IcecoPowerSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEnti
         self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{ENTITY_POWER_SWITCH}"
         self._attr_name = "Power"
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def is_on(self) -> bool | None:
@@ -123,13 +118,7 @@ class IcecoEcoModeSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEn
         self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{ENTITY_ECO_MODE}"
         self._attr_name = "ECO Mode"
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def is_on(self) -> bool | None:
@@ -171,13 +160,7 @@ class IcecoLockSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], SwitchEntit
         self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{ENTITY_LOCK}"
         self._attr_name = "Control Panel Lock"
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def is_on(self) -> bool | None:
@@ -220,13 +203,7 @@ class IcecoConnectionSwitch(CoordinatorEntity[IcecoDataUpdateCoordinator], Switc
         self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{ENTITY_CONNECTION}"
         self._attr_name = "BLE Connection"
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def is_on(self) -> bool:

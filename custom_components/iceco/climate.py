@@ -12,7 +12,6 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -27,6 +26,7 @@ from .const import (
     TEMP_STEP,
 )
 from .coordinator import IcecoDataUpdateCoordinator
+from .helpers import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,13 +75,7 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
         )
         self._attr_name = f"{zone.capitalize()} Zone"
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def current_temperature(self) -> float | None:
