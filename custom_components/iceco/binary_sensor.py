@@ -10,7 +10,6 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -32,6 +31,7 @@ from .const import (
     ENTITY_TEMP_ALARM_RIGHT,
 )
 from .coordinator import IcecoDataUpdateCoordinator
+from .helpers import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,13 +73,7 @@ class IcecoPowerLossAlarm(
         self._attr_name = "Power Loss Alarm"
         self._entry = entry
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def is_on(self) -> bool:
@@ -129,13 +123,7 @@ class IcecoTempAlarm(CoordinatorEntity[IcecoDataUpdateCoordinator], BinarySensor
         self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{entity_id}"
         self._attr_name = f"{zone.capitalize()} Zone Temperature Alarm"
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def is_on(self) -> bool:
