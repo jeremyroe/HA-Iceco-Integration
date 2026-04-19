@@ -13,15 +13,6 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 @pytest.fixture(autouse=True)
-def patch_bluetooth_expire():
-    """Prevent BT scanner from scheduling the device expiry timer during tests."""
-    with patch(
-        "homeassistant.components.bluetooth.base_scanner.BaseHaScanner._async_expire_devices_schedule_next",
-    ):
-        yield
-
-
-@pytest.fixture(autouse=True)
 def patch_bluetooth_history():
     """Patch bluetooth history loading which relies on D-Bus (Linux only).
 
