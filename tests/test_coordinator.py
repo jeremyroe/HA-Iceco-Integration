@@ -48,7 +48,7 @@ def _make_coord(address: str = TEST_ADDRESS, options: dict | None = None):
     hass = _make_hass(entry)
     ble_device = MagicMock()
     ble_device.address = address
-    coord = IcecoDataUpdateCoordinator(hass, ble_device, entry.entry_id)
+    coord = IcecoDataUpdateCoordinator(hass, ble_device, entry)
     # Suppress HA coordinator machinery — we're testing data logic only
     coord.async_set_updated_data = MagicMock()
     return coord
