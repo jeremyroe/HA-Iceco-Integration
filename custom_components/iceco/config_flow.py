@@ -14,8 +14,6 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.data_entry_flow import FlowResult
 
-from .iceco_protocol import IcecoClient
-
 from .const import (
     CONF_DEVICE_ADDRESS,
     CONF_POLL_INTERVAL,
@@ -62,26 +60,10 @@ class IcecoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._discovery_info = discovery_info
 
-        # Try to identify the device
-        try:
-            device_info = await IcecoClient.identify_device(
-                discovery_info.address, timeout=5.0
-            )
-
-            # Store device info for confirmation step
-            self.context["title_placeholders"] = {
-                "name": discovery_info.name or "Iceco Refrigerator",
-                "address": discovery_info.address,
-                "left_temp": device_info.get("left_temp"),
-                "right_temp": device_info.get("right_temp"),
-            }
-
-        except Exception as err:
-            _LOGGER.debug("Could not identify device: %s", err)
-            self.context["title_placeholders"] = {
-                "name": discovery_info.name or "Iceco Refrigerator",
-                "address": discovery_info.address,
-            }
+        self.context["title_placeholders"] = {
+            "name": discovery_info.name or "Iceco Refrigerator",
+            "address": discovery_info.address,
+        }
 
         return await self.async_step_confirm()
 
@@ -97,19 +79,12 @@ class IcecoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         placeholders = self.context.get("title_placeholders", {})
 
-        description_placeholders = {
-            "name": placeholders.get("name", "Unknown"),
-            "address": placeholders.get("address", "Unknown"),
-        }
-
-        # Add temperature info if available
-        if "left_temp" in placeholders:
-            description_placeholders["left_temp"] = placeholders["left_temp"]
-            description_placeholders["right_temp"] = placeholders["right_temp"]
-
         return self.async_show_form(
             step_id="confirm",
-            description_placeholders=description_placeholders,
+            description_placeholders={
+                "name": placeholders.get("name", "Unknown"),
+                "address": placeholders.get("address", "Unknown"),
+            },
         )
 
     async def async_step_user(
@@ -123,22 +98,10 @@ class IcecoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(address)
             self._abort_if_unique_id_configured()
 
-            # Try to identify the device
-            try:
-                device_info = await IcecoClient.identify_device(address, timeout=10.0)
-
-                return self.async_create_entry(
-                    title=f"Iceco Refrigerator ({address})",
-                    data={CONF_DEVICE_ADDRESS: address},
-                )
-
-            except Exception as err:
-                _LOGGER.error("Failed to connect to device: %s", err)
-                return self.async_show_form(
-                    step_id="user",
-                    data_schema=vol.Schema({vol.Required(CONF_ADDRESS): str}),
-                    errors={"base": "cannot_connect"},
-                )
+            return self.async_create_entry(
+                title=f"Iceco Refrigerator ({address})",
+                data={CONF_DEVICE_ADDRESS: address},
+            )
 
         # Scan for devices
         self._discovered_devices = list(

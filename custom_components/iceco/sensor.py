@@ -12,7 +12,6 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfElectricPotential
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -23,6 +22,7 @@ from .const import (
     ENTITY_BATTERY_VOLTAGE,
 )
 from .coordinator import IcecoDataUpdateCoordinator
+from .helpers import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Iceco sensor entities from a config entry."""
-    coordinator: IcecoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: IcecoDataUpdateCoordinator = entry.runtime_data
 
     async_add_entities([IcecoBatterySensor(coordinator, entry)])
 
@@ -57,13 +57,7 @@ class IcecoBatterySensor(CoordinatorEntity[IcecoDataUpdateCoordinator], SensorEn
         self._attr_unique_id = f"{entry.data[CONF_DEVICE_ADDRESS]}_{ENTITY_BATTERY_VOLTAGE}"
         self._attr_name = "Battery Voltage"
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def native_value(self) -> float | None:

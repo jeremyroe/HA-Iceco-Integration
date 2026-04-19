@@ -18,12 +18,12 @@ from typing import Optional
 class IcecoStatus:
     """Represents the status parsed from PRIMARY notification.
 
-    PRIMARY notification contains SETPOINTS (target temperatures) in the fridge's
-    native display unit, plus battery and power state. Updates immediately when a
-    setpoint command is accepted.
+    PRIMARY notification contains SETPOINTS (target temperatures) always in °C,
+    plus battery and power state. Updates immediately when a setpoint command is
+    accepted.
     """
 
-    # Setpoint temperatures in fridge's native display unit (°F when unit_mode=F, °C when unit_mode=C)
+    # Setpoint temperatures always in °C regardless of device display unit
     left_temp: int   # Left zone setpoint
     right_temp: int  # Right zone setpoint
 
@@ -56,7 +56,7 @@ class IcecoProtocol:
 
     SECONDARY notification: /S00/U/<zones>,<eco_max>,<unit_mode>,<L_Temp>,<R_Temp>\n
     - Contains CURRENT PHYSICAL TEMPERATURES in the fridge's display unit.
-    - Also carries eco_max (0=ECO, 1=MAX) and unit_mode (1=°C, 2=°F).
+    - Also carries eco_max (1=ECO, 0=MAX) and unit_mode (1=°C, 2=°F).
     - Always reflects actual sensor readings — confirmed via hardware testing.
     """
 
@@ -228,7 +228,7 @@ class IcecoProtocol:
             Dict with 'left_setpoint', 'right_setpoint', 'eco_max', 'unit_mode', 'zone_count'
             (keys use 'setpoint' naming for legacy reasons — these are actual current temps)
             unit_mode: 1 = Celsius, 2 = Fahrenheit
-            eco_max: 0 = ECO mode, 1 = MAX mode
+            eco_max: 1 = ECO mode, 0 = MAX mode
             zone_count: from /S00/U/X field (2 = dual-zone)
         """
         try:
@@ -243,7 +243,7 @@ class IcecoProtocol:
 
                 parts = message.split(',')
                 if len(parts) >= 5:
-                    eco_max = int(parts[1])  # 0=ECO, 1=MAX
+                    eco_max = int(parts[1])  # 1=ECO, 0=MAX
                     unit_mode = int(parts[2])  # 1=C, 2=F
                     left_setpoint = int(parts[3])
                     right_setpoint = int(parts[4])

@@ -12,7 +12,6 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -27,6 +26,7 @@ from .const import (
     TEMP_STEP,
 )
 from .coordinator import IcecoDataUpdateCoordinator
+from .helpers import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Iceco climate entities from a config entry."""
-    coordinator: IcecoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: IcecoDataUpdateCoordinator = entry.runtime_data
 
     async_add_entities(
         [
@@ -52,8 +52,7 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
 
     _attr_has_entity_name = True
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    # Only one HVAC mode — fridge always cools. Power on/off via the Power switch.
-    _attr_hvac_modes = [HVACMode.COOL]
+    _attr_hvac_modes = [HVACMode.COOL, HVACMode.OFF]
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
     _attr_preset_modes = ["Refrigeration", "Freezing"]
     _attr_min_temp = MIN_TEMP
@@ -76,13 +75,7 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
         )
         self._attr_name = f"{zone.capitalize()} Zone"
 
-        # Device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data[CONF_DEVICE_ADDRESS])},
-            name="Iceco Refrigerator",
-            manufacturer="Iceco",
-            model="Dual Zone Refrigerator",
-        )
+        self._attr_device_info = build_device_info(entry.data[CONF_DEVICE_ADDRESS])
 
     @property
     def current_temperature(self) -> float | None:
@@ -106,7 +99,9 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
 
     @property
     def hvac_mode(self) -> HVACMode:
-        """Always cooling — power on/off is the Power switch's job."""
+        """Return COOL when powered on, OFF when powered off."""
+        if not self.coordinator.data.power_on:
+            return HVACMode.OFF
         return HVACMode.COOL
 
     @property
@@ -161,8 +156,11 @@ class IcecoClimate(CoordinatorEntity[IcecoDataUpdateCoordinator], ClimateEntity)
             _LOGGER.error("Failed to set %s zone temperature: %s", self._zone, err)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """No-op — only one HVAC mode supported."""
-        pass
+        """Toggle power to match requested HVAC mode."""
+        if hvac_mode == HVACMode.OFF and self.coordinator.data.power_on:
+            await self.coordinator.async_toggle_power()
+        elif hvac_mode == HVACMode.COOL and not self.coordinator.data.power_on:
+            await self.coordinator.async_toggle_power()
 
     @property
     def available(self) -> bool:

@@ -14,10 +14,11 @@ from bleak_retry_connector import (
 )
 
 from homeassistant.components import bluetooth
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .iceco_protocol import IcecoClient, IcecoProtocol, IcecoStatus
+from .iceco_protocol import IcecoProtocol, IcecoStatus
 
 from .const import (
     ALARM_HYSTERESIS,
@@ -63,8 +64,9 @@ class IcecoData:
     # ECO mode state (from SECONDARY eco_max field: 1=ECO, 0=MAX)
     eco_mode: Optional[bool] = None  # True=ECO, False=MAX, None=unknown
 
-    # Lock state (from PRIMARY field 5: 2=locked, 1=unlocked)
-    locked: Optional[bool] = None  # True=locked, False=unlocked, None=unknown
+    # Power and lock state (promoted from IcecoStatus for entity access)
+    power_on: Optional[bool] = None  # True=on, False=off, None=unknown
+    locked: Optional[bool] = None    # True=locked, False=unlocked, None=unknown
 
     # Alarm timing tracking
     _left_alarm_start: Optional[datetime] = field(default=None, repr=False)
@@ -78,7 +80,7 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
         self,
         hass: HomeAssistant,
         ble_device: BLEDevice,
-        entry_id: str,
+        entry: ConfigEntry,
     ) -> None:
         """Initialize coordinator."""
         super().__init__(
@@ -86,17 +88,17 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
             _LOGGER,
             name=DOMAIN,
             update_interval=timedelta(
-                seconds=hass.config_entries.async_get_entry(entry_id)
-                .options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+                seconds=entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
             ),
         )
 
         self._ble_device = ble_device
-        self._entry_id = entry_id
+        self._entry = entry
         self._client: Optional[BleakClientWithServiceCache] = None
         self._reconnect_task: Optional[asyncio.Task] = None
         self._reconnect_count = 0
         self._manual_disconnect = False  # Flag to prevent auto-reconnect
+        self._write_lock = asyncio.Lock()  # Serialise BLE writes to prevent concurrent GATT ops
 
 
         # Event set on first received notification - used to verify data is flowing after connect
@@ -108,8 +110,7 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
     @property
     def _options(self) -> dict:
         """Get current options from config entry."""
-        entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        return entry.options if entry else {}
+        return self._entry.options
 
     async def _async_setup(self) -> None:
         """Set up the coordinator - called once on entry setup."""
@@ -182,6 +183,7 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
             self.data.status = status
             self.data.left_setpoint = status.left_temp
             self.data.right_setpoint = status.right_temp
+            self.data.power_on = status.power_on
             self.data.locked = status.locked
             self.data.last_update = datetime.now()
             self.data.power_loss_alarm = False
@@ -339,21 +341,30 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
                     # client causes start_notify() to fail, which flips state to
                     # "disconnected" and then the next health check skips reconnect entirely.
                     _LOGGER.warning("Connection appears stale, disconnecting and reconnecting")
-                    self._manual_disconnect = True  # prevent _handle_disconnect from scheduling another reconnect
                     try:
-                        if self._client and self._client.is_connected:
-                            await self._client.disconnect()
-                    except Exception as disc_err:
-                        _LOGGER.debug("Error disconnecting stale client: %s", disc_err)
-                    self._manual_disconnect = False
-                    self.data.connection_state = "disconnected"
-                    await self._async_connect()
+                        async with asyncio.timeout(60):
+                            self._manual_disconnect = True  # prevent _handle_disconnect from scheduling another reconnect
+                            try:
+                                if self._client and self._client.is_connected:
+                                    await self._client.disconnect()
+                            except Exception as disc_err:
+                                _LOGGER.debug("Error disconnecting stale client: %s", disc_err)
+                            self._manual_disconnect = False
+                            self.data.connection_state = "disconnected"
+                            await self._async_connect()
+                    except TimeoutError:
+                        _LOGGER.error("Timed out during stale connection recovery")
+                        self._manual_disconnect = False
                 elif self.data.connection_state == "disconnected":
                     # Disconnected with no active reconnect task — scheduled reconnect
                     # either never started or failed without rescheduling itself.
                     if not self._reconnect_task or self._reconnect_task.done():
                         _LOGGER.warning("Disconnected with no active reconnect task, triggering reconnect")
-                        await self._async_connect()
+                        try:
+                            async with asyncio.timeout(60):
+                                await self._async_connect()
+                        except TimeoutError:
+                            _LOGGER.error("Timed out during health-check reconnect")
 
         return self.data
 
@@ -364,7 +375,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.set_left_temperature(temp)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             self.data.left_setpoint = temp
             _LOGGER.info("Left zone setpoint → %d°C", temp)
             self.async_set_updated_data(self.data)
@@ -380,7 +392,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.set_right_temperature(temp)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             self.data.right_setpoint = temp
             _LOGGER.info("Right zone setpoint → %d°C", temp)
             self.async_set_updated_data(self.data)
@@ -396,7 +409,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.toggle_power()
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             _LOGGER.info("Toggled power state")
 
         except Exception as err:
@@ -410,7 +424,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.set_eco_mode(eco_on)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             _LOGGER.info("ECO mode → %s", "ECO" if eco_on else "MAX")
 
         except Exception as err:
@@ -424,7 +439,8 @@ class IcecoDataUpdateCoordinator(DataUpdateCoordinator[IcecoData]):
 
         try:
             command = IcecoProtocol.set_lock(locked)
-            await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
+            async with self._write_lock:
+                await self._client.write_gatt_char(IcecoProtocol.WRITE_UUID, command, response=False)
             _LOGGER.info("Lock → %s", "locked" if locked else "unlocked")
 
         except Exception as err:
