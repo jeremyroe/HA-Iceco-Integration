@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.exceptions import ConfigEntryNotReady
+
 import pytest
 
 from homeassistant.config_entries import ConfigEntryState
@@ -58,7 +60,7 @@ class TestSetupEntry:
         ) as mock_coord_cls:
             mock_coord = MagicMock()
             mock_coord.async_config_entry_first_refresh = AsyncMock(
-                side_effect=Exception("BLE connection failed")
+                side_effect=ConfigEntryNotReady("BLE connection failed")
             )
             mock_coord_cls.return_value = mock_coord
 
